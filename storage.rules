@@ -1,0 +1,10 @@
+rules_version = '2';
+
+// La app no usa Firebase Storage: se bloquea todo acceso.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

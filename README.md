@@ -15,6 +15,10 @@ View your app in AI Studio: https://ai.studio/apps/39098175-57c7-4cd3-840d-f2370
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Set the `GEMINI_API_KEY` and `ALLOWED_EMAILS` in [.env.local](.env.local) (see `.env.example`)
 3. Run the app:
    `npm run dev`
+
+## Seguridad
+
+Ver [SEGURIDAD.md](SEGURIDAD.md): cambios realizados y pasos pendientes (reglas de Firestore, login con Google).

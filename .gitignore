@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Credenciales: nunca subirlas al repositorio
+serviceAccountKey*.json
+*-firebase-adminsdk-*.json
