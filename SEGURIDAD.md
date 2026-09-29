@@ -26,24 +26,22 @@
 
 ## Pasos pendientes (en este orden)
 
-### 1. Cerrar la base de datos (hacerlo ya)
+### 1. Proyecto de Firebase propio
 
-Antes de cambiar nada, guarde una copia: en la app, exporte el PDF o copie los datos. La app
-también los tiene en el `localStorage` del navegador.
+La app usa el proyecto `historiaclinica-df503` (ver `firebase-applet-config.json`), del que usted
+es propietario. El proyecto que creó AI Studio (`giga-yolk-fk8sk`) no permitía autorizar dominios
+ni garantizaba poder publicar reglas, así que se dejó de usar.
 
-En la consola de Firebase → **Firestore Database** → base `ai-studio-39098175-…` → **Reglas**,
-pegue el contenido de `firestore.rules` y publique. Haga lo mismo en la base `(default)` si existe.
-Con la CLI de Firebase: `npx firebase-tools deploy --only firestore:rules,storage`.
-
-Desde ese momento, la "copia en la nube" y la "restauración por código" dejan de funcionar
-hasta completar el paso 3. Los datos locales de la app siguen funcionando.
+En la consola de Firebase → **Firestore Database** → **Reglas**, pegue el contenido de
+`firestore.rules` y publique. Con la CLI de Firebase:
+`npx firebase-tools deploy --only firestore:rules,storage`.
 
 ### 2. Activar el login con Google
 
-1. Firebase → **Authentication** → **Sign-in method** → habilite **Google**.
-2. **Authentication → Settings → Authorized domains**: agregue el dominio donde está publicada la
-   app (la URL de Cloud Run de AI Studio).
-3. En AI Studio → **Secrets**, agregue `ALLOWED_EMAILS` con su email (por ejemplo `su-email@gmail.com`).
+1. Firebase → **Authentication** → **Método de acceso** → habilite **Google**.
+2. **Authentication → Configuración → Dominios autorizados**: agregue `juanzad.github.io`
+   (y la URL de Cloud Run si también publica la app desde AI Studio).
+3. Si usa el servidor (AI Studio / Cloud Run), agregue en **Secrets** `ALLOWED_EMAILS` con su email.
 
 ### 3. Interfaz (ya hecho)
 
@@ -59,15 +57,16 @@ pasan automáticamente a su usuario (`src/utils/localStore.ts`).
 
 1. Abra la app **en el mismo navegador que venía usando**, inicie sesión y use "Respaldar en la Nube" una vez: sus datos locales se copian a `users/<su uid>`.
 2. Compruebe que se ven al restaurar.
-3. En la consola de Firestore, borre la colección `patients`, que tiene la copia vieja y expuesta.
+3. En el proyecto viejo de AI Studio (`giga-yolk-fk8sk`) → Firestore, borre la colección
+   `patients`, que tiene la copia vieja y expuesta.
 
 ### 5. Recomendado
 
 - Los archivos adjuntos (PDF/imágenes) se guardan dentro de cada evento en base64. Firestore
   admite hasta 1 MB por documento, así que un evento con adjuntos grandes no se podrá respaldar.
   La solución es subir los archivos a Firebase Storage (con reglas por usuario, como las de Firestore).
-- Haga **privado** el repositorio de GitHub (Settings → General → Danger Zone → Change visibility).
-
+- Si deja de usar GitHub Pages, haga **privado** el repositorio (Settings → General → Danger Zone →
+  Change visibility). Pages gratuito requiere repositorio público.
 - Google Cloud Console → **APIs y servicios → Credenciales**: restrinja la API key del navegador a
   los dominios de su app (restricción por *HTTP referrer*).
 - Firebase → **App Check**: impide que se usen sus APIs desde fuera de su app.
