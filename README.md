@@ -22,3 +22,13 @@ View your app in AI Studio: https://ai.studio/apps/39098175-57c7-4cd3-840d-f2370
 ## Seguridad
 
 Ver [SEGURIDAD.md](SEGURIDAD.md): cambios realizados y pasos pendientes (reglas de Firestore, login con Google).
+
+## Versión web (GitHub Pages)
+
+Cada cambio en `main` se publica automáticamente en https://juanzad.github.io/HistoriaClinica/
+(ver `.github/workflows/pages.yml`). Esa versión no tiene servidor, así que la lectura de
+exámenes con IA está desactivada; el resto (login, historial, respaldo) funciona igual.
+
+Requisitos (una sola vez):
+1. GitHub → Settings → Pages → **Source: GitHub Actions**.
+2. Firebase → Authentication → Settings → Authorized domains → agregar `juanzad.github.io`.
