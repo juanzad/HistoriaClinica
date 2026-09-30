@@ -14,6 +14,7 @@ import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry } from './type
 import type { User } from 'firebase/auth';
 import { saveHealthRecord, loadHealthRecord, watchUser, logout } from './firebase';
 import { loadLocalRecord, saveLocalRecord, clearLocalRecord } from './utils/localStore';
+import { downloadBackupFile, readBackupFile, mergeById } from './utils/backupFile';
 import { generateMedicalReportPDF } from './utils/pdfGenerator';
 import { safeFormatDate } from './utils/dateHelper';
 
@@ -268,6 +269,31 @@ function HealthApp({ user }: { user: User }) {
 
     triggerNotification('Se ha restaurado el historial clínico guardado en tu cuenta.', 'success');
     return true;
+  };
+
+  // Descargar una copia completa en un archivo .json
+  const handleExportFile = () => {
+    downloadBackupFile({ personalData, events, sideEffects, metrics });
+    triggerNotification('Copia del historial descargada en un archivo.', 'success');
+  };
+
+  // Importar un archivo .json: agrega los registros que no estén ya cargados.
+  const handleImportFile = async (file: File) => {
+    const imported = await readBackupFile(file);
+    const ev = mergeById(events, imported.events);
+    const se = mergeById(sideEffects, imported.sideEffects);
+    const mt = mergeById(metrics, imported.metrics);
+
+    const replacePersonal = imported.personalData && window.confirm(
+      `¿Reemplazar también los datos personales por los del archivo (${imported.personalData.fullName})?`
+    );
+
+    setEvents(ev.merged);
+    setSideEffects(se.merged);
+    setMetrics(mt.merged);
+    if (replacePersonal && imported.personalData) setPersonalData(imported.personalData);
+
+    return { events: ev.added, sideEffects: se.added, metrics: mt.added };
   };
 
   // Cerrar sesión. En un dispositivo compartido conviene borrar también la copia local.
@@ -711,6 +737,8 @@ function HealthApp({ user }: { user: User }) {
                   userEmail={user.email ?? ''}
                   onTriggerBackup={triggerCloudBackup}
                   onTriggerRestore={triggerCloudRestore}
+                  onExportFile={handleExportFile}
+                  onImportFile={handleImportFile}
                   onResetAllData={handleResetAllData}
                 />
               )}

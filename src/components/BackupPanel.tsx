@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { Cloud, CheckCircle2, AlertTriangle, RefreshCw, UserCircle, ShieldCheck, Trash2 } from 'lucide-react';
+import { Cloud, CheckCircle2, AlertTriangle, RefreshCw, UserCircle, ShieldCheck, Trash2, Download, Upload } from 'lucide-react';
 
 interface BackupPanelProps {
   userEmail: string;
   onTriggerBackup: () => Promise<void>;
   onTriggerRestore: () => Promise<boolean>;
+  onExportFile: () => void;
+  onImportFile: (file: File) => Promise<{ events: number; sideEffects: number; metrics: number }>;
   onResetAllData?: () => void;
 }
 
@@ -12,11 +14,32 @@ export default function BackupPanel({
   userEmail,
   onTriggerBackup, 
   onTriggerRestore,
+  onExportFile,
+  onImportFile,
   onResetAllData
 }: BackupPanelProps) {
   const [backupStatus, setBackupStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [restoreStatus, setRestoreStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [importMsg, setImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite volver a elegir el mismo archivo
+    if (!file) return;
+    try {
+      const added = await onImportFile(file);
+      const total = added.events + added.sideEffects + added.metrics;
+      setImportMsg({
+        ok: true,
+        text: total === 0
+          ? 'No había registros nuevos: todo lo del archivo ya estaba cargado.'
+          : `Se agregaron ${added.events} eventos, ${added.sideEffects} registros de efectos y ${added.metrics} métricas. Recuerda respaldar en la nube.`,
+      });
+    } catch (err: any) {
+      setImportMsg({ ok: false, text: err.message || 'No se pudo importar el archivo.' });
+    }
+  };
 
   const handleBackup = async () => {
     setBackupStatus('loading');
@@ -180,6 +203,48 @@ export default function BackupPanel({
             * Al restaurar, se reemplazarán los datos temporales actuales con la información de la copia de seguridad.
           </div>
         </div>
+      </div>
+
+      {/* SECCIÓN ARCHIVO: EXPORTAR / IMPORTAR */}
+      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+        <div className="space-y-1">
+          <h3 className="font-sans font-bold text-sm text-slate-800 flex items-center gap-2">
+            <Download className="w-4.5 h-4.5 text-slate-600" />
+            Copia en Archivo
+          </h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Descarga todo tu historial en un archivo para guardarlo donde quieras, o importa un archivo de respaldo.
+            Al importar solo se agregan los registros que no tengas ya cargados.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={onExportFile}
+            className="flex-1 py-2.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer"
+            id="btn-export-file"
+          >
+            <Download className="w-4 h-4" />
+            Exportar a Archivo
+          </button>
+          <label
+            className="flex-1 py-2.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer"
+            id="btn-import-file"
+          >
+            <Upload className="w-4 h-4" />
+            Importar desde Archivo
+            <input type="file" accept="application/json,.json" className="hidden" onChange={handleImport} />
+          </label>
+        </div>
+        {importMsg && (
+          <div className={`rounded-xl p-3 text-xs font-semibold flex items-start gap-2 ${
+            importMsg.ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-100 text-red-800'
+          }`}>
+            {importMsg.ok
+              ? <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+              : <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />}
+            <span>{importMsg.text}</span>
+          </div>
+        )}
       </div>
 
       {/* SECCIÓN REINICIAR TODO DESDE CERO */}
