@@ -2,5 +2,5 @@
   "name": "Historial de Salud y Métricas",
   "description": "Aplicación para el seguimiento de la historia de salud, efectos de la inmunoterapia, registro de métricas corporales, informes, imágenes y generación de reportes PDF para médicos.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

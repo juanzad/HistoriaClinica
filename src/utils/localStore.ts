@@ -74,7 +74,34 @@ export function saveLocalRecord(uid: string, record: Required<LocalRecord>): boo
   }
 }
 
+/**
+ * Estado de sincronización de este dispositivo:
+ * - changedAt: último cambio hecho aquí.
+ * - syncedAt: fecha de la copia en la nube que este dispositivo tiene (la última que guardó o cargó).
+ * - exportedAt: última vez que se exportó a archivo.
+ */
+export interface SyncMeta {
+  changedAt?: string;
+  syncedAt?: string;
+  exportedAt?: string;
+}
+
+const metaKey = (uid: string) => `hc_${uid}_sync`;
+
+export function getSyncMeta(uid: string): SyncMeta {
+  return readJson<SyncMeta>(metaKey(uid)) ?? {};
+}
+
+export function updateSyncMeta(uid: string, changes: SyncMeta) {
+  try {
+    localStorage.setItem(metaKey(uid), JSON.stringify({ ...getSyncMeta(uid), ...changes }));
+  } catch (e) {
+    console.error('No se pudo guardar el estado de sincronización:', e);
+  }
+}
+
 /** Borra la copia local de este usuario (al cerrar sesión en un dispositivo compartido). */
 export function clearLocalRecord(uid: string) {
   for (const field of FIELDS) localStorage.removeItem(keyFor(uid, field));
+  localStorage.removeItem(metaKey(uid));
 }
