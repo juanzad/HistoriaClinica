@@ -234,7 +234,7 @@ export function generateMedicalReportPDF(
   y += 8;
 
   const secondaryEvents = events
-    .filter(e => ['Consulta', 'Estudio', 'Otro'].includes(e.type))
+    .filter(e => ['Consulta', 'Estudio', 'Laboratorio', 'Otro'].includes(e.type))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   if (secondaryEvents.length === 0) {
@@ -337,7 +337,7 @@ export function generateMedicalReportPDF(
 
   const labEvents = events
     .filter(e => e.type === 'Laboratorio' && e.labResults)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime()); // De más antiguo a más reciente para leer evolución natural
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // De más antiguo a más reciente para leer evolución natural
 
   if (labEvents.length === 0) {
     doc.setFont('Helvetica', 'italic');
