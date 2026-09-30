@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile } from './types';
+import { parseLabReportWithAI } from './labAi';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -190,17 +191,8 @@ export async function loadHealthRecord(): Promise<HealthRecord | null> {
   };
 }
 
-/** Llama a /api/parse-lab-report con el token de sesión que exige el servidor. */
+/** Lee un examen con Gemini (Firebase AI Logic). Solo con sesión iniciada. */
 export async function parseLabReport(body: { fileData?: string; mimeType?: string; textContent?: string }) {
-  const token = await requireUser().getIdToken();
-  const response = await fetch('/api/parse-lab-report', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
-  const resData = await response.json().catch(() => ({}));
-  if (!response.ok || !resData.success) {
-    throw new Error(resData.error || 'No se pudo analizar el informe.');
-  }
-  return resData.data;
+  requireUser();
+  return parseLabReportWithAI(app, body);
 }

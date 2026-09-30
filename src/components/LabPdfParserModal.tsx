@@ -31,29 +31,6 @@ export default function LabPdfParserModal({ isOpen, onClose, onAddEvent }: LabPd
 
   if (!isOpen) return null;
 
-  // La versión publicada en GitHub Pages no tiene servidor: el análisis con IA
-  // solo funciona en la versión con servidor (AI Studio / Cloud Run).
-  if (import.meta.env.VITE_DISABLE_AI === 'true') {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-        <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-center">
-          <Sparkles className="w-8 h-8 text-blue-500 mx-auto" />
-          <h3 className="font-sans font-bold text-lg text-slate-900">Lectura con IA no disponible</h3>
-          <p className="text-sm text-slate-500 leading-relaxed">
-            En esta versión web el análisis automático de exámenes está desactivado.
-            Puede cargar el examen con "Agregar Evento Manual".
-          </p>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold cursor-pointer"
-          >
-            Entendido
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;

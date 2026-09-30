@@ -26,9 +26,10 @@ Ver [SEGURIDAD.md](SEGURIDAD.md): cambios realizados y pasos pendientes (reglas 
 ## Versión web (GitHub Pages)
 
 Cada cambio en `main` se publica automáticamente en https://juanzad.github.io/HistoriaClinica/
-(ver `.github/workflows/pages.yml`). Esa versión no tiene servidor, así que la lectura de
-exámenes con IA está desactivada; el resto (login, historial, respaldo) funciona igual.
+(ver `.github/workflows/pages.yml`). La lectura de exámenes con IA usa Firebase AI Logic desde el
+navegador (`src/labAi.ts`), así que no necesita servidor.
 
 Requisitos (una sola vez):
 1. GitHub → Settings → Pages → **Source: GitHub Actions**.
 2. Firebase → Authentication → Settings → Authorized domains → agregar `juanzad.github.io`.
+3. Firebase → Servicios de IA → AI Logic → Comenzar → Gemini Developer API (para leer exámenes con IA).
