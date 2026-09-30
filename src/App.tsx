@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   defaultPersonalData, 
   defaultEvents, 
@@ -12,8 +12,8 @@ import {
 } from './defaultData';
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry } from './types';
 import type { User } from 'firebase/auth';
-import { saveHealthRecord, loadHealthRecord, watchUser, logout } from './firebase';
-import { loadLocalRecord, saveLocalRecord, clearLocalRecord } from './utils/localStore';
+import { saveHealthRecord, loadHealthRecord, getCloudUpdatedAt, watchUser, logout } from './firebase';
+import { loadLocalRecord, saveLocalRecord, clearLocalRecord, getSyncMeta, updateSyncMeta } from './utils/localStore';
 import { downloadBackupFile, readBackupFile, mergeById } from './utils/backupFile';
 import { generateMedicalReportPDF } from './utils/pdfGenerator';
 import { safeFormatDate } from './utils/dateHelper';
@@ -24,8 +24,8 @@ import PersonalDataPanel from './components/PersonalDataPanel';
 import MetricCharts from './components/MetricCharts';
 import BackupPanel from './components/BackupPanel';
 import LabComparisonPanel from './components/LabComparisonPanel';
-import LabPdfParserModal from './components/LabPdfParserModal';
 import LoginScreen from './components/LoginScreen';
+import AiReportModal from './components/AiReportModal';
 
 import { 
   FileText, 
@@ -42,7 +42,8 @@ import {
   Check,
   X,
   Sparkles,
-  LogOut
+  LogOut,
+  Bot
 } from 'lucide-react';
 
 // Solo se muestra el historial con una sesión de Google iniciada.
@@ -69,10 +70,25 @@ function HealthApp({ user }: { user: User }) {
   const [sideEffects, setSideEffects] = useState<SideEffectEntry[]>([]);
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isAiReportOpen, setIsAiReportOpen] = useState(false);
+
+  // --- RESPALDO AUTOMÁTICO EN LA NUBE ---
+  // 'paused': no se respalda solo (conflicto con otro dispositivo o nube inaccesible al abrir);
+  // hace falta que el usuario elija "Respaldar" o "Restaurar" en Ajustes Nube.
+  type SyncState = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'paused';
+  const [sync, setSync] = useState<{ state: SyncState; at?: string; message?: string }>({ state: 'idle' });
+  const [exportedAt, setExportedAt] = useState<string | undefined>(() => getSyncMeta(user.uid).exportedAt);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSaving = useRef(false);
+  const saveAgain = useRef(false);
+  const isPaused = useRef(false);
+  // Cambios de estado que vienen de cargar datos (no del usuario): no disparan respaldo.
+  const skipNextChange = useRef(false);
+  const latest = useRef({ personalData, events, sideEffects, metrics });
+  latest.current = { personalData, events, sideEffects, metrics };
   
   const [activeTab, setActiveTab] = useState<'timeline' | 'effects' | 'metrics' | 'labs' | 'backup'>('timeline');
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | null }>({ message: '', type: null });
-  const [isPdfParserOpen, setIsPdfParserOpen] = useState(false);
 
   // --- ESTADOS DE EDICIÓN DEL SIDEBAR ---
   const [isEditingSidebar, setIsEditingSidebar] = useState(false);
@@ -141,48 +157,154 @@ function HealthApp({ user }: { user: User }) {
     triggerNotification('Perfil de salud actualizado correctamente.', 'success');
   };
 
+  const pauseSync = (message: string) => {
+    isPaused.current = true;
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    setSync({ state: 'paused', message });
+  };
+
+  // Guarda en la nube lo que hay en la app. Si ya hay un guardado en curso, lo repite al terminar.
+  const runAutoBackup = useCallback(async () => {
+    if (isPaused.current) return;
+    if (isSaving.current) {
+      saveAgain.current = true;
+      return;
+    }
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    isSaving.current = true;
+    setSync({ state: 'saving' });
+    try {
+      const { updatedAt, blockedDeletes } = await saveHealthRecord(latest.current, { allowBulkDelete: false });
+      if (blockedDeletes > 0) {
+        // No se guardó nada: la nube conserva todo hasta que el usuario confirme.
+        pauseSync(`Borraste ${blockedDeletes} registros. Por seguridad la nube no se modificó. Si fue a propósito, toca "Respaldar en la Nube"; si no, usa "Restaurar" en Ajustes Nube.`);
+        return;
+      }
+      updateSyncMeta(user.uid, { syncedAt: updatedAt });
+      setSync({ state: 'saved', at: updatedAt });
+    } catch (e: any) {
+      console.error('Error en el respaldo automático:', e);
+      setSync({ state: 'error', message: e?.message || 'Error desconocido' });
+      // Reintento en un minuto (p. ej. si se cortó internet).
+      syncTimer.current = setTimeout(() => runAutoBackup(), 60_000);
+    } finally {
+      isSaving.current = false;
+      if (saveAgain.current) {
+        saveAgain.current = false;
+        runAutoBackup();
+      }
+    }
+  }, [user.uid]);
+
+  const scheduleAutoBackup = () => {
+    if (isPaused.current) return;
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    setSync((prev) => (prev.state === 'saving' ? prev : { state: 'pending' }));
+    syncTimer.current = setTimeout(() => runAutoBackup(), 4000);
+  };
+
   // --- CARGA INICIAL ---
-  // Primero la copia local de este usuario; si no hay, se intenta traer el respaldo de la nube.
+  // Se usa la copia más reciente entre este dispositivo y la nube, sin pisar nunca cambios de otro lado.
   useEffect(() => {
+    let cancelled = false;
     const local = loadLocalRecord(user.uid);
     const hasLocal = Boolean(local.personalData || local.events || local.sideEffects || local.metrics);
+    const meta = getSyncMeta(user.uid);
 
-    const applyRecord = (record: typeof local) => {
+    const pause = (message: string) => {
+      if (!cancelled) pauseSync(message);
+    };
+    const applyRecord = (record: typeof local, fromCloudAt?: string | null) => {
+      if (cancelled) return;
+      skipNextChange.current = true;
       setPersonalData(record.personalData ?? defaultPersonalData);
       setEvents(record.events ?? defaultEvents);
       setSideEffects(record.sideEffects ?? defaultSideEffects);
       setMetrics(record.metrics ?? defaultMetrics);
+      if (fromCloudAt) {
+        updateSyncMeta(user.uid, { syncedAt: fromCloudAt, changedAt: fromCloudAt });
+        setSync({ state: 'saved', at: fromCloudAt });
+      }
       setIsLoaded(true);
     };
 
-    if (hasLocal) {
-      applyRecord(local);
-      return;
-    }
+    (async () => {
+      let cloudAt: string | null;
+      try {
+        cloudAt = await getCloudUpdatedAt();
+      } catch (e) {
+        console.error('No se pudo consultar la nube:', e);
+        applyRecord(local);
+        pause('No se pudo conectar con la nube al abrir la app. El respaldo automático está en pausa: recarga la página cuando tengas conexión.');
+        return;
+      }
 
-    let cancelled = false;
-    loadHealthRecord()
-      .then((cloud) => {
-        if (!cancelled) applyRecord(cloud ?? {});
-      })
-      .catch((e) => {
+      const cloudIsNewer = Boolean(cloudAt && meta.syncedAt && cloudAt > meta.syncedAt);
+      const localHasUnsynced = Boolean(meta.changedAt && (!meta.syncedAt || meta.changedAt > meta.syncedAt));
+
+      if (hasLocal && !cloudIsNewer) {
+        applyRecord(local);
+        // Cambios de una sesión anterior que no llegaron a la nube (o datos de antes del respaldo automático).
+        if (localHasUnsynced || !meta.syncedAt) { if (!cancelled) scheduleAutoBackup(); }
+        else setSync({ state: 'saved', at: meta.syncedAt });
+        return;
+      }
+      if (hasLocal && cloudIsNewer && localHasUnsynced) {
+        applyRecord(local);
+        pause('Hay cambios más nuevos en la nube (de otro dispositivo) y también cambios sin respaldar en este. En Ajustes Nube elige "Restaurar" (usar los de la nube) o "Respaldar" (usar los de este dispositivo).');
+        return;
+      }
+      if (!cloudAt) {
+        applyRecord(local); // primera vez: nada en la nube todavía
+        return;
+      }
+      try {
+        const cloud = await loadHealthRecord();
+        applyRecord(cloud ?? {}, cloud?.updatedAt ?? cloudAt);
+      } catch (e) {
         console.error('Error al cargar el respaldo de la nube:', e);
-        if (!cancelled) applyRecord({});
-      });
+        applyRecord(local);
+        pause('No se pudo descargar tu respaldo de la nube. El respaldo automático está en pausa para no pisarlo: recarga la página.');
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.uid]);
 
-  // --- PERSISTENCIA AUTOMÁTICA EN LOCALSTORAGE ---
+  // --- PERSISTENCIA: COPIA LOCAL SIEMPRE, NUBE AUTOMÁTICA TRAS CADA CAMBIO ---
   useEffect(() => {
-    if (isLoaded) {
-      const saved = saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics });
-      if (!saved) {
-        triggerNotification('El navegador no tiene lugar para guardar la copia local (adjuntos grandes). Respalde en la nube para no perder cambios.', 'error');
-      }
+    if (!isLoaded) return;
+    const saved = saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics });
+    if (!saved) {
+      triggerNotification('El navegador no tiene lugar para guardar la copia local (adjuntos grandes). Tus cambios se guardan en la nube.', 'error');
     }
+    if (skipNextChange.current) {
+      skipNextChange.current = false;
+      return;
+    }
+    updateSyncMeta(user.uid, { changedAt: new Date().toISOString() });
+    scheduleAutoBackup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personalData, events, sideEffects, metrics, isLoaded, user.uid]);
+
+  // Guardar ya si se cierra o se oculta la pestaña con cambios pendientes, y avisar antes de cerrar.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && syncTimer.current && !isPaused.current) runAutoBackup();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (sync.state === 'pending' || sync.state === 'saving') e.preventDefault();
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [sync.state, runAutoBackup]);
 
   // Mostrar notificaciones temporales
   const triggerNotification = (message: string, type: 'success' | 'error') => {
@@ -249,15 +371,24 @@ function HealthApp({ user }: { user: User }) {
 
   // --- OPERACIONES FIRESTORE EN LA NUBE ---
   
-  // Subir respaldo
+  // Subir respaldo (manual): también aplica borrados grandes y quita la pausa del respaldo automático.
   const triggerCloudBackup = async () => {
-    await saveHealthRecord({
-      personalData,
-      events,
-      sideEffects,
-      metrics
-    });
-    triggerNotification('Copia de seguridad guardada con éxito en la nube de Firebase.', 'success');
+    if (isSaving.current) throw new Error('Ya se está guardando un respaldo. Espere unos segundos e intente de nuevo.');
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    isSaving.current = true;
+    setSync({ state: 'saving' });
+    try {
+      const { updatedAt } = await saveHealthRecord(latest.current, { allowBulkDelete: true });
+      updateSyncMeta(user.uid, { syncedAt: updatedAt });
+      isPaused.current = false;
+      setSync({ state: 'saved', at: updatedAt });
+      triggerNotification('Copia de seguridad guardada con éxito en la nube de Firebase.', 'success');
+    } catch (e: any) {
+      setSync({ state: isPaused.current ? 'paused' : 'error', message: e?.message || 'Error desconocido' });
+      throw e;
+    } finally {
+      isSaving.current = false;
+    }
   };
 
   // Restaurar respaldo de la cuenta conectada
@@ -265,10 +396,15 @@ function HealthApp({ user }: { user: User }) {
     const cloudData = await loadHealthRecord();
     if (!cloudData) return false;
 
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    skipNextChange.current = true;
     setPersonalData(cloudData.personalData);
     setEvents(cloudData.events);
     setSideEffects(cloudData.sideEffects);
     setMetrics(cloudData.metrics);
+    if (cloudData.updatedAt) updateSyncMeta(user.uid, { syncedAt: cloudData.updatedAt, changedAt: cloudData.updatedAt });
+    isPaused.current = false;
+    setSync({ state: 'saved', at: cloudData.updatedAt ?? undefined });
 
     triggerNotification('Se ha restaurado el historial clínico guardado en tu cuenta.', 'success');
     return true;
@@ -277,6 +413,9 @@ function HealthApp({ user }: { user: User }) {
   // Descargar una copia completa en un archivo .json
   const handleExportFile = () => {
     downloadBackupFile({ personalData, events, sideEffects, metrics });
+    const now = new Date().toISOString();
+    updateSyncMeta(user.uid, { exportedAt: now });
+    setExportedAt(now);
     triggerNotification('Copia del historial descargada en un archivo.', 'success');
   };
 
@@ -359,6 +498,17 @@ function HealthApp({ user }: { user: User }) {
       .slice(0, 2)
       .toUpperCase() || 'MB';
   };
+
+
+  // Hasta decidir entre la copia local y la de la nube no se muestra nada editable:
+  // un cambio hecho en ese momento se perdería al terminar la carga.
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-sm text-slate-500" id="loading-record">
+        Cargando tu historial…
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen lg:h-screen bg-slate-100 text-[#1E293B] overflow-x-hidden lg:overflow-hidden font-sans flex flex-col lg:border-8 lg:border-[#CBD5E1] antialiased">
@@ -568,10 +718,7 @@ function HealthApp({ user }: { user: User }) {
 
           {/* Acciones de sincronización y PDF del pie */}
           <div className="mt-auto p-5 border-t border-slate-200 bg-slate-50/70 space-y-2">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
-              <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Sesión segura · Firebase</span>
-            </div>
+            <SyncStatus sync={sync} exportedAt={exportedAt} />
             
             <button
               onClick={() => triggerCloudBackup().catch((e) => {
@@ -592,6 +739,16 @@ function HealthApp({ user }: { user: User }) {
             >
               <FileText className="w-3.5 h-3.5 text-blue-600" />
               Generar Reporte PDF
+            </button>
+
+            <button
+              onClick={() => setIsAiReportOpen(true)}
+              className="w-full bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold py-2 px-3 rounded-lg text-xs shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              title="Texto con tu evolución para pegar en el chat de una IA"
+              id="btn-open-ai-report"
+            >
+              <Bot className="w-3.5 h-3.5 text-violet-600" />
+              Informe para IA
             </button>
           </div>
         </aside>
@@ -703,14 +860,12 @@ function HealthApp({ user }: { user: User }) {
                   onAddEvent={handleAddEvent}
                   onUpdateEvent={handleUpdateEvent}
                   onDeleteEvent={handleDeleteEvent}
-                  onOpenPdfParser={() => setIsPdfParserOpen(true)}
                 />
               )}
 
               {activeTab === 'labs' && (
                 <LabComparisonPanel 
                   events={events} 
-                  onOpenPdfParser={() => setIsPdfParserOpen(true)}
                 />
               )}
 
@@ -747,12 +902,12 @@ function HealthApp({ user }: { user: User }) {
               )}
             </div>
 
-            {/* Modal para lectura e interpretación de examenes PDF con Gemini IA */}
-            <LabPdfParserModal
-              isOpen={isPdfParserOpen}
-              onClose={() => setIsPdfParserOpen(false)}
-              onAddEvent={handleAddEvent}
-            />
+            {isAiReportOpen && (
+              <AiReportModal
+                data={{ personalData, events, sideEffects, metrics }}
+                onClose={() => setIsAiReportOpen(false)}
+              />
+            )}
 
             {/* PIE DE PÁGINA */}
             <footer className="py-4 text-center text-[11px] text-slate-400 border-t border-slate-200 mt-6 font-medium">
@@ -762,6 +917,49 @@ function HealthApp({ user }: { user: User }) {
           </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+const timeAgo = (iso: string) => {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return 'recién';
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.round(hours / 24);
+  return `hace ${days} ${days === 1 ? 'día' : 'días'}`;
+};
+
+// Estado del respaldo en la nube y de la última copia en archivo, siempre visible en la barra lateral.
+function SyncStatus({ sync, exportedAt }: {
+  sync: { state: string; at?: string; message?: string };
+  exportedAt?: string;
+}) {
+  const view: Record<string, { color: string; text: string }> = {
+    idle: { color: 'bg-slate-300', text: 'Respaldo automático activo' },
+    pending: { color: 'bg-amber-400', text: 'Cambios por guardar…' },
+    saving: { color: 'bg-blue-500 animate-pulse', text: 'Guardando en la nube…' },
+    saved: { color: 'bg-green-500', text: sync.at ? `Guardado en la nube ${timeAgo(sync.at)}` : 'Guardado en la nube' },
+    error: { color: 'bg-red-500', text: 'No se pudo guardar (se reintentará)' },
+    paused: { color: 'bg-red-500', text: 'Respaldo automático en pausa' },
+  };
+  const { color, text } = view[sync.state] ?? view.idle;
+  const exportDays = exportedAt ? (Date.now() - new Date(exportedAt).getTime()) / 86_400_000 : Infinity;
+
+  return (
+    <div className="mb-3 space-y-1.5" id="sync-status">
+      <div className="flex items-center gap-2">
+        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${color}`}></div>
+        <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">{text}</span>
+      </div>
+      {sync.message && (
+        <p className={`text-[10px] leading-snug ${sync.state === 'saved' ? 'text-amber-700' : 'text-red-600'}`}>{sync.message}</p>
+      )}
+      <p className={`text-[10px] ${exportDays > 14 ? 'text-amber-700 font-semibold' : 'text-slate-400'}`}>
+        {exportedAt ? `Copia en archivo: ${timeAgo(exportedAt)}` : 'Nunca exportaste una copia a archivo'}
+        {exportDays > 14 && ' · Recomendado: Ajustes Nube → Exportar a Archivo'}
+      </p>
     </div>
   );
 }

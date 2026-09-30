@@ -19,7 +19,6 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile } from './types';
-import { parseLabReportWithAI } from './labAi';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -108,37 +107,47 @@ async function writeInBatches(ops: Array<(batch: ReturnType<typeof writeBatch>) 
   }
 }
 
+// Un respaldo automático nunca borra de la nube más de esta cantidad de registros de una vez:
+// un borrado grande (p. ej. "Reiniciar desde cero") solo se aplica con "Respaldar" manual.
+const MAX_AUTO_DELETES = 3;
+
+export interface SaveResult {
+  /** Momento de la copia guardada (se toma al empezar, así un cambio hecho durante el guardado queda pendiente). */
+  updatedAt: string;
+  /**
+   * Si es mayor que 0, NO se guardó nada: la app tiene esa cantidad de registros menos que la nube
+   * (más que MAX_AUTO_DELETES) y el borrado debe confirmarse con un respaldo manual.
+   */
+  blockedDeletes: number;
+}
+
+/** Fecha del último respaldo completo en la nube, o null si nunca se respaldó. */
+export async function getCloudUpdatedAt(): Promise<string | null> {
+  const { uid } = requireUser();
+  const snap = await getDoc(doc(db, 'users', uid));
+  return snap.exists() ? ((snap.data().updatedAt as string) ?? null) : null;
+}
+
 /**
  * Guarda todo el historial en users/{uid}. Las reglas de Firestore solo permiten
  * que cada usuario lea y escriba su propio documento. Lo que se borró en la app
- * también se borra de la nube, para que no reaparezca al restaurar.
+ * también se borra de la nube, salvo que sean más de MAX_AUTO_DELETES registros y
+ * no se haya pedido explícitamente (allowBulkDelete).
  */
-export async function saveHealthRecord(data: HealthRecord): Promise<void> {
+export async function saveHealthRecord(
+  data: HealthRecord,
+  { allowBulkDelete = true }: { allowBulkDelete?: boolean } = {}
+): Promise<SaveResult> {
   const { uid } = requireUser();
+  const updatedAt = new Date().toISOString();
 
-  await setDoc(doc(db, 'users', uid), {
-    personalData: data.personalData,
-    updatedAt: new Date().toISOString(),
-  });
-
-  // 1. Adjuntos primero: si algo falla, los eventos no quedan apuntando a archivos inexistentes.
-  const files = data.events.flatMap((e) => e.files ?? []).filter((f) => f.data);
-  for (const file of files) await uploadFile(uid, file);
-
-  // 2. Eventos (sin el contenido de los adjuntos), efectos y métricas.
   const stripped = data.events.map((e) =>
     e.files ? { ...e, files: e.files.map(({ data: _data, ...meta }) => meta) } : e
   );
   const current = { events: stripped, sideEffects: data.sideEffects, metrics: data.metrics };
-  await writeInBatches(
-    SUBCOLLECTIONS.flatMap((name) =>
-      current[name].map((item) => (batch: ReturnType<typeof writeBatch>) =>
-        batch.set(doc(db, 'users', uid, name, item.id), item)
-      )
-    )
-  );
 
-  // 3. Borrar de la nube lo que ya no existe en la app.
+  // 1. Primero se calcula qué habría que borrar de la nube. Si es un borrado grande y no fue pedido
+  //    a mano, no se escribe nada: la nube queda intacta hasta que el usuario lo confirme.
   const deletions: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
   for (const name of SUBCOLLECTIONS) {
     const keep = new Set(current[name].map((item) => item.id));
@@ -147,17 +156,39 @@ export async function saveHealthRecord(data: HealthRecord): Promise<void> {
       if (!keep.has(d.id)) deletions.push((batch) => batch.delete(d.ref));
     }
   }
-  await writeInBatches(deletions);
+  if (!allowBulkDelete && deletions.length > MAX_AUTO_DELETES) {
+    return { updatedAt, blockedDeletes: deletions.length };
+  }
 
+  // 2. Adjuntos: antes que los eventos, para que ningún evento apunte a un archivo inexistente.
+  const files = data.events.flatMap((e) => e.files ?? []).filter((f) => f.data);
+  for (const file of files) await uploadFile(uid, file);
+
+  // 3. Eventos (sin el contenido de los adjuntos), efectos y métricas.
+  await writeInBatches(
+    SUBCOLLECTIONS.flatMap((name) =>
+      current[name].map((item) => (batch: ReturnType<typeof writeBatch>) =>
+        batch.set(doc(db, 'users', uid, name, item.id), item)
+      )
+    )
+  );
+
+  // 4. Borrados.
+  await writeInBatches(deletions);
   const keepFiles = new Set(data.events.flatMap((e) => e.files ?? []).map((f) => f.id));
   const storedFiles = await getDocs(collection(db, 'users', uid, 'files'));
   for (const d of storedFiles.docs) {
     if (!keepFiles.has(d.id)) await deleteFile(uid, d.id);
   }
+
+  // 5. Al final, la fecha: si algo falló antes, la nube no aparenta tener una copia completa más nueva.
+  await setDoc(doc(db, 'users', uid), { personalData: data.personalData, updatedAt });
+
+  return { updatedAt, blockedDeletes: 0 };
 }
 
 /** Recupera el historial del usuario conectado, o null si todavía no guardó nada. */
-export async function loadHealthRecord(): Promise<HealthRecord | null> {
+export async function loadHealthRecord(): Promise<(HealthRecord & { updatedAt: string | null }) | null> {
   const { uid } = requireUser();
 
   const snap = await getDoc(doc(db, 'users', uid));
@@ -185,14 +216,9 @@ export async function loadHealthRecord(): Promise<HealthRecord | null> {
 
   return {
     personalData: snap.data().personalData as PersonalData,
+    updatedAt: (snap.data().updatedAt as string) ?? null,
     events: events.sort(byDateDesc),
     sideEffects: sideEffects.sort(byDateDesc),
     metrics: metrics.sort(byDateDesc),
   };
-}
-
-/** Lee un examen con Gemini (Firebase AI Logic). Solo con sesión iniciada. */
-export async function parseLabReport(body: { fileData?: string; mimeType?: string; textContent?: string }) {
-  requireUser();
-  return parseLabReportWithAI(app, body);
 }

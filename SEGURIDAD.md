@@ -15,14 +15,21 @@
 | 10 | Los eventos creados por el análisis con IA se guardaban sin `id` (no se podían borrar y el respaldo fallaba). | Media | Corregido; los existentes se reparan al cargar |
 | 8 | `clearFirebase.ts` borra todos los pacientes sin credenciales. | Alta | No se incluyó en el repositorio. Bórrelo también de su PC. |
 
-## Cambios en el servidor (`server.ts`)
+## Servidor e IA
 
-- `/api/parse-lab-report` exige `Authorization: Bearer <ID token de Firebase>`. El token se verifica
-  con `firebase-admin` y el email tiene que estar verificado y en la variable `ALLOWED_EMAILS`.
-- Límite de 20 solicitudes cada 15 minutos por IP.
-- Solo acepta PDF, PNG, JPEG, WEBP y HEIC. El texto está limitado a 50.000 caracteres y el cuerpo a 20 MB (antes 25 MB en todas las rutas).
-- Errores genéricos hacia el cliente: el detalle queda solo en el log del servidor.
-- Cabeceras `helmet`: CSP en producción, HSTS, `nosniff`, sin `X-Powered-By`.
+- La lectura de exámenes con IA se quitó (antes: Gemini desde `server.ts` y luego Firebase AI Logic).
+  La app no envía datos de salud a servicios de IA; "Informe para IA" solo arma un texto que el
+  usuario decide si copia y dónde lo pega (anónimo por defecto).
+- `server.ts` solo sirve la app (para desarrollo local o AI Studio), con cabeceras `helmet`.
+
+## Respaldo automático
+
+- Cada cambio se guarda solo en la nube a los pocos segundos (y al ocultar/cerrar la pestaña).
+- Nunca borra más de 3 registros de la nube de una vez: un borrado grande (p. ej. "Reiniciar desde
+  cero") pausa el respaldo automático sin tocar la nube, hasta confirmarlo con "Respaldar".
+- Si la nube tiene cambios más nuevos de otro dispositivo, se cargan; si además hay cambios sin
+  respaldar en este, se pausa y se pide elegir. Si la nube no responde al abrir, también se pausa.
+- La barra lateral muestra el estado y cuándo fue la última copia en archivo (se recomienda cada 2 semanas).
 
 ## Pasos pendientes (en este orden)
 
