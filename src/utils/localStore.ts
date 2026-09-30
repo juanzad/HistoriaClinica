@@ -57,11 +57,21 @@ export function loadLocalRecord(uid: string): LocalRecord {
   };
 }
 
-export function saveLocalRecord(uid: string, record: Required<LocalRecord>) {
-  localStorage.setItem(keyFor(uid, 'personal'), JSON.stringify(record.personalData));
-  localStorage.setItem(keyFor(uid, 'events'), JSON.stringify(record.events));
-  localStorage.setItem(keyFor(uid, 'side_effects'), JSON.stringify(record.sideEffects));
-  localStorage.setItem(keyFor(uid, 'metrics'), JSON.stringify(record.metrics));
+/**
+ * Devuelve false si el navegador no tiene lugar (el localStorage admite ~5 MB y los
+ * adjuntos ocupan mucho). En ese caso los datos siguen en la app y en la nube.
+ */
+export function saveLocalRecord(uid: string, record: Required<LocalRecord>): boolean {
+  try {
+    localStorage.setItem(keyFor(uid, 'personal'), JSON.stringify(record.personalData));
+    localStorage.setItem(keyFor(uid, 'events'), JSON.stringify(record.events));
+    localStorage.setItem(keyFor(uid, 'side_effects'), JSON.stringify(record.sideEffects));
+    localStorage.setItem(keyFor(uid, 'metrics'), JSON.stringify(record.metrics));
+    return true;
+  } catch (e) {
+    console.error('No se pudo guardar la copia local:', e);
+    return false;
+  }
 }
 
 /** Borra la copia local de este usuario (al cerrar sesión en un dispositivo compartido). */

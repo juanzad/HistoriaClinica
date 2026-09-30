@@ -177,7 +177,10 @@ function HealthApp({ user }: { user: User }) {
   // --- PERSISTENCIA AUTOMÁTICA EN LOCALSTORAGE ---
   useEffect(() => {
     if (isLoaded) {
-      saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics });
+      const saved = saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics });
+      if (!saved) {
+        triggerNotification('El navegador no tiene lugar para guardar la copia local (adjuntos grandes). Respalde en la nube para no perder cambios.', 'error');
+      }
     }
   }, [personalData, events, sideEffects, metrics, isLoaded, user.uid]);
 
