@@ -8,7 +8,7 @@ import {
   type User,
 } from 'firebase/auth';
 import {
-  getFirestore,
+  initializeFirestore,
   doc,
   setDoc,
   getDoc,
@@ -21,7 +21,9 @@ import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry } from './type
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// ignoreUndefinedProperties: los campos opcionales vacíos (p. ej. notes: undefined) se omiten
+// en lugar de hacer fallar todo el respaldo.
+export const db = initializeFirestore(app, { ignoreUndefinedProperties: true }, firebaseConfig.firestoreDatabaseId);
 
 export interface HealthRecord {
   personalData: PersonalData;
