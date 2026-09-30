@@ -5,7 +5,8 @@ import type { FirebaseApp } from 'firebase/app';
 // de Firebase: no hace falta servidor (sirve en GitHub Pages) ni guardar una API key en el código.
 // El examen solo se envía para leerlo; lo que se guarda es el evento que el usuario confirma.
 
-const MODEL = 'gemini-3.6-flash';
+// Se prueban en orden: si un modelo no existe (o se retiró) en el proyecto, se usa el siguiente.
+const MODELS = ['gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
 
 const SYSTEM_INSTRUCTION = `
 Eres un asistente médico experto en oncología y análisis de laboratorio clínico.
@@ -73,20 +74,53 @@ export async function parseLabReportWithAI(
       : 'Analiza el documento PDF/imagen adjunto y extrae todos los datos de laboratorio en el esquema JSON solicitado.',
   });
 
-  const model = getGenerativeModel(getAI(app, { backend: new GoogleAIBackend() }), {
-    model: MODEL,
-    systemInstruction: SYSTEM_INSTRUCTION,
-    generationConfig: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA },
-  });
-
-  try {
-    const result = await model.generateContent(parts);
-    return JSON.parse(result.response.text() || '{}');
-  } catch (e) {
-    console.error('Error al leer el examen con IA:', e);
-    if (e instanceof AIError && e.code === 'api-not-enabled') {
-      throw new Error('La lectura con IA no está activada. En Firebase → Servicios de IA → AI Logic, pulse "Comenzar".');
+  const ai = getAI(app, { backend: new GoogleAIBackend() });
+  let lastError: unknown;
+  for (const name of MODELS) {
+    const model = getGenerativeModel(ai, {
+      model: name,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA },
+    });
+    try {
+      const result = await model.generateContent(parts);
+      return JSON.parse(result.response.text() || '{}');
+    } catch (e) {
+      console.error(`Error al leer el examen con IA (${name}):`, e);
+      lastError = e;
+      if (!isModelNotFound(e)) break;
     }
-    throw new Error('No se pudo leer el examen con IA. Intente de nuevo o cárguelo manualmente.');
   }
+  throw new Error(describeError(lastError));
+}
+
+function isModelNotFound(e: unknown) {
+  return e instanceof AIError && (e.customErrorData?.status === 404 || /not found|not supported/i.test(e.message));
+}
+
+// Del mensaje del SDK ("AI: Error fetching from <url>: [403 ] <mensaje de Google> (AI/...)") queda solo lo de Google.
+const googleMessage = (e: AIError) => e.message.match(/\] (.*?)(?: \(AI\/[^)]*\))?$/)?.[1] ?? e.message;
+
+// Mensaje con la causa real, para saber qué ajustar.
+function describeError(e: unknown): string {
+  if (e instanceof SyntaxError) {
+    return 'La IA respondió en un formato inesperado. Intente de nuevo.';
+  }
+  if (!(e instanceof AIError)) {
+    return `No se pudo leer el examen con IA: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  const status = e.customErrorData?.status;
+  if (e.code === 'api-not-enabled') {
+    return 'La lectura con IA no está activada. En Firebase → Servicios de IA → AI Logic, pulse "Comenzar" y elija "Gemini Developer API".';
+  }
+  if (status === 429) {
+    return 'Se alcanzó el límite de uso gratuito de la IA. Espere unos minutos e intente de nuevo.';
+  }
+  if (status === 403) {
+    return `Google rechazó la consulta (permiso denegado). Revise que AI Logic esté activado con "Gemini Developer API". Detalle: ${googleMessage(e)}`;
+  }
+  if (e.code === 'parse-failed') {
+    return 'La IA respondió en un formato inesperado. Intente de nuevo.';
+  }
+  return `No se pudo leer el examen con IA${status ? ` (código ${status})` : ''}: ${googleMessage(e)}`;
 }
