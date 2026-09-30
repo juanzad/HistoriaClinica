@@ -1,5 +1,5 @@
 # Compila la interfaz y la publica en GitHub Pages (https://juanzad.github.io/HistoriaClinica/).
-# Pages no tiene servidor, así que el análisis con IA queda desactivado en esta versión.
+# La lectura de exámenes con IA usa Firebase AI Logic desde el navegador (no necesita servidor).
 name: Publicar en GitHub Pages
 
 on:
@@ -28,8 +28,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx vite build --base=/HistoriaClinica/
-        env:
-          VITE_DISABLE_AI: "true"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
