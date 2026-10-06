@@ -1,4 +1,4 @@
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, EventType } from '../types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, EventType, Appointment, AppointmentStatus } from '../types';
 
 // Copia completa del historial en un archivo .json, para guardarla fuera de la app
 // o para importar datos recuperados (por ejemplo, de un PDF de la versión anterior).
@@ -10,12 +10,14 @@ const EVENT_TYPES: EventType[] = [
   'Cirugía', 'Quimioterapia', 'Radioterapia', 'Inmunoterapia', 'Estudio', 'Consulta', 'Laboratorio', 'Otro',
 ];
 const SEVERITIES: SideEffectEntry['severity'][] = ['Leve', 'Moderado', 'Severo'];
+const APPOINTMENT_STATUSES: AppointmentStatus[] = ['Programado', 'Realizado', 'Cancelado'];
 
 export interface BackupFile {
   personalData?: PersonalData;
   events: MedicalEvent[];
   sideEffects: SideEffectEntry[];
   metrics: MetricEntry[];
+  appointments: Appointment[];
 }
 
 export function downloadBackupFile(data: Required<BackupFile>) {
@@ -80,6 +82,28 @@ function parseMetric(v: unknown): MetricEntry | null {
   };
 }
 
+function parseAppointment(v: unknown): Appointment | null {
+  if (!isObject(v) || !str(v.id) || !isDate(v.date) || !APPOINTMENT_STATUSES.includes(v.status)) return null;
+  return {
+    id: v.id,
+    date: v.date,
+    time: /^\d{2}:\d{2}$/.test(str(v.time)) ? v.time : '09:00',
+    durationMin: num(v.durationMin) || 60,
+    specialty: str(v.specialty) || 'Sin especialidad',
+    title: str(v.title) || 'Turno',
+    professional: str(v.professional) || undefined,
+    location: str(v.location) || undefined,
+    notes: str(v.notes) || undefined,
+    status: v.status,
+    reminderMinutes: num(v.reminderMinutes),
+    seriesId: str(v.seriesId) || undefined,
+    linkedEventId: str(v.linkedEventId) || undefined,
+    createdAt: str(v.createdAt) || new Date().toISOString(),
+    updatedAt: str(v.updatedAt) || new Date().toISOString(),
+    calendarAddedAt: str(v.calendarAddedAt) || undefined,
+  };
+}
+
 function parsePersonalData(v: unknown): PersonalData | undefined {
   if (!isObject(v) || !str(v.fullName)) return undefined;
   return {
@@ -113,6 +137,7 @@ export async function readBackupFile(file: File): Promise<BackupFile> {
     events: list(raw.events, parseEvent),
     sideEffects: list(raw.sideEffects, parseSideEffect),
     metrics: list(raw.metrics, parseMetric),
+    appointments: list(raw.appointments, parseAppointment),
   };
 }
 

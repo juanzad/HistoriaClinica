@@ -6,7 +6,7 @@ interface BackupPanelProps {
   onTriggerBackup: () => Promise<void>;
   onTriggerRestore: () => Promise<boolean>;
   onExportFile: () => void;
-  onImportFile: (file: File) => Promise<{ events: number; sideEffects: number; metrics: number }>;
+  onImportFile: (file: File) => Promise<{ events: number; sideEffects: number; metrics: number; appointments: number }>;
   onResetAllData?: () => void;
 }
 
@@ -29,12 +29,12 @@ export default function BackupPanel({
     if (!file) return;
     try {
       const added = await onImportFile(file);
-      const total = added.events + added.sideEffects + added.metrics;
+      const total = added.events + added.sideEffects + added.metrics + added.appointments;
       setImportMsg({
         ok: true,
         text: total === 0
           ? 'No había registros nuevos: todo lo del archivo ya estaba cargado.'
-          : `Se agregaron ${added.events} eventos, ${added.sideEffects} registros de efectos y ${added.metrics} métricas. Recuerda respaldar en la nube.`,
+          : `Se agregaron ${added.events} eventos, ${added.sideEffects} registros de efectos, ${added.metrics} métricas y ${added.appointments} turnos.`,
       });
     } catch (err: any) {
       setImportMsg({ ok: false, text: err.message || 'No se pudo importar el archivo.' });

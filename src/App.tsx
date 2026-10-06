@@ -10,7 +10,7 @@ import {
   defaultSideEffects, 
   defaultMetrics 
 } from './defaultData';
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry } from './types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, Appointment, EventType } from './types';
 import type { User } from 'firebase/auth';
 import { saveHealthRecord, loadHealthRecord, getCloudUpdatedAt, watchUser, logout } from './firebase';
 import { loadLocalRecord, saveLocalRecord, clearLocalRecord, getSyncMeta, updateSyncMeta } from './utils/localStore';
@@ -26,6 +26,8 @@ import BackupPanel from './components/BackupPanel';
 import LabComparisonPanel from './components/LabComparisonPanel';
 import LoginScreen from './components/LoginScreen';
 import AiReportModal from './components/AiReportModal';
+import AgendaPanel from './components/AgendaPanel';
+import { appointmentStart } from './utils/ics';
 
 import { 
   FileText, 
@@ -43,7 +45,8 @@ import {
   X,
   Sparkles,
   LogOut,
-  Bot
+  Bot,
+  CalendarDays
 } from 'lucide-react';
 
 // Solo se muestra el historial con una sesión de Google iniciada.
@@ -69,6 +72,7 @@ function HealthApp({ user }: { user: User }) {
   const [events, setEvents] = useState<MedicalEvent[]>([]);
   const [sideEffects, setSideEffects] = useState<SideEffectEntry[]>([]);
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isAiReportOpen, setIsAiReportOpen] = useState(false);
 
@@ -84,10 +88,10 @@ function HealthApp({ user }: { user: User }) {
   const isPaused = useRef(false);
   // Cambios de estado que vienen de cargar datos (no del usuario): no disparan respaldo.
   const skipNextChange = useRef(false);
-  const latest = useRef({ personalData, events, sideEffects, metrics });
-  latest.current = { personalData, events, sideEffects, metrics };
+  const latest = useRef({ personalData, events, sideEffects, metrics, appointments });
+  latest.current = { personalData, events, sideEffects, metrics, appointments };
   
-  const [activeTab, setActiveTab] = useState<'timeline' | 'effects' | 'metrics' | 'labs' | 'backup'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'agenda' | 'effects' | 'metrics' | 'labs' | 'backup'>('timeline');
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | null }>({ message: '', type: null });
 
   // --- ESTADOS DE EDICIÓN DEL SIDEBAR ---
@@ -184,7 +188,12 @@ function HealthApp({ user }: { user: User }) {
       setSync({ state: 'saved', at: updatedAt });
     } catch (e: any) {
       console.error('Error en el respaldo automático:', e);
-      setSync({ state: 'error', message: e?.message || 'Error desconocido' });
+      setSync({
+        state: 'error',
+        message: e?.code === 'permission-denied'
+          ? 'Firebase rechazó el guardado: actualiza las reglas de Firestore (deben incluir "appointments"). Tus datos siguen en este dispositivo.'
+          : e?.message || 'Error desconocido',
+      });
       // Reintento en un minuto (p. ej. si se cortó internet).
       syncTimer.current = setTimeout(() => runAutoBackup(), 60_000);
     } finally {
@@ -208,7 +217,7 @@ function HealthApp({ user }: { user: User }) {
   useEffect(() => {
     let cancelled = false;
     const local = loadLocalRecord(user.uid);
-    const hasLocal = Boolean(local.personalData || local.events || local.sideEffects || local.metrics);
+    const hasLocal = Boolean(local.personalData || local.events || local.sideEffects || local.metrics || local.appointments);
     const meta = getSyncMeta(user.uid);
 
     const pause = (message: string) => {
@@ -221,6 +230,7 @@ function HealthApp({ user }: { user: User }) {
       setEvents(record.events ?? defaultEvents);
       setSideEffects(record.sideEffects ?? defaultSideEffects);
       setMetrics(record.metrics ?? defaultMetrics);
+      setAppointments(record.appointments ?? []);
       if (fromCloudAt) {
         updateSyncMeta(user.uid, { syncedAt: fromCloudAt, changedAt: fromCloudAt });
         setSync({ state: 'saved', at: fromCloudAt });
@@ -277,7 +287,7 @@ function HealthApp({ user }: { user: User }) {
   // --- PERSISTENCIA: COPIA LOCAL SIEMPRE, NUBE AUTOMÁTICA TRAS CADA CAMBIO ---
   useEffect(() => {
     if (!isLoaded) return;
-    const saved = saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics });
+    const saved = saveLocalRecord(user.uid, { personalData, events, sideEffects, metrics, appointments });
     if (!saved) {
       triggerNotification('El navegador no tiene lugar para guardar la copia local (adjuntos grandes). Tus cambios se guardan en la nube.', 'error');
     }
@@ -288,7 +298,7 @@ function HealthApp({ user }: { user: User }) {
     updateSyncMeta(user.uid, { changedAt: new Date().toISOString() });
     scheduleAutoBackup();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [personalData, events, sideEffects, metrics, isLoaded, user.uid]);
+  }, [personalData, events, sideEffects, metrics, appointments, isLoaded, user.uid]);
 
   // Guardar ya si se cierra o se oculta la pestaña con cambios pendientes, y avisar antes de cerrar.
   useEffect(() => {
@@ -369,6 +379,57 @@ function HealthApp({ user }: { user: User }) {
     triggerNotification('Perfil de salud actualizado.', 'success');
   };
 
+  // --- AGENDA DE TURNOS ---
+  const handleAddAppointments = (list: Appointment[]) => {
+    setAppointments((prev) => [...prev, ...list]);
+    triggerNotification(list.length > 1 ? `Se agregaron ${list.length} turnos a la agenda.` : 'Turno agregado a la agenda.', 'success');
+  };
+
+  const handleUpdateAppointment = (updated: Appointment) => {
+    setAppointments((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+  };
+
+  const handleDeleteAppointment = (id: string) => {
+    setAppointments((prev) => prev.filter((a) => a.id !== id));
+    triggerNotification('Turno eliminado de la agenda.', 'success');
+  };
+
+  const handleAddedToCalendar = (ids: string[]) => {
+    const ts = new Date().toISOString();
+    setAppointments((prev) => prev.map((a) => (ids.includes(a.id) ? { ...a, calendarAddedAt: ts, updatedAt: a.updatedAt > ts ? a.updatedAt : ts } : a)));
+  };
+
+  // "Se realizó": queda en la línea de tiempo como evento clínico, enlazado al turno.
+  const handleAppointmentDone = (a: Appointment) => {
+    const ts = new Date().toISOString();
+    const eventId = `event-${crypto.randomUUID()}`;
+    const type: EventType = /estudio|tomograf|resonanc|ecograf|pet\b|imagen/i.test(`${a.specialty} ${a.title}`)
+      ? 'Estudio'
+      : /laborator|análisis|analisis/i.test(`${a.specialty} ${a.title}`)
+        ? 'Laboratorio'
+        : /inmunoterap/i.test(`${a.specialty} ${a.title}`)
+          ? 'Inmunoterapia'
+          : 'Consulta';
+    const newEvent: MedicalEvent = {
+      id: eventId,
+      date: a.date,
+      type,
+      title: `${a.specialty}: ${a.title}`,
+      description: a.notes || 'Turno de la agenda realizado.',
+      professional: a.professional || '',
+      institution: a.location || '',
+      createdAt: ts,
+    };
+    setEvents((prev) => [newEvent, ...prev].sort((x, y) => new Date(y.date).getTime() - new Date(x.date).getTime()));
+    setAppointments((prev) => prev.map((x) => (x.id === a.id ? { ...x, status: 'Realizado', linkedEventId: eventId, updatedAt: ts } : x)));
+    triggerNotification('Turno realizado: se agregó a tu línea de tiempo (puedes completarlo allí).', 'success');
+  };
+
+  const upcomingAppointments = appointments
+    .filter((a) => a.status === 'Programado' && appointmentStart(a).getTime() >= Date.now())
+    .sort((a, b) => appointmentStart(a).getTime() - appointmentStart(b).getTime());
+  const pendingConfirmation = appointments.filter((a) => a.status === 'Programado' && appointmentStart(a).getTime() < Date.now()).length;
+
   // --- OPERACIONES FIRESTORE EN LA NUBE ---
   
   // Subir respaldo (manual): también aplica borrados grandes y quita la pausa del respaldo automático.
@@ -402,6 +463,7 @@ function HealthApp({ user }: { user: User }) {
     setEvents(cloudData.events);
     setSideEffects(cloudData.sideEffects);
     setMetrics(cloudData.metrics);
+    setAppointments(cloudData.appointments ?? []);
     if (cloudData.updatedAt) updateSyncMeta(user.uid, { syncedAt: cloudData.updatedAt, changedAt: cloudData.updatedAt });
     isPaused.current = false;
     setSync({ state: 'saved', at: cloudData.updatedAt ?? undefined });
@@ -412,7 +474,7 @@ function HealthApp({ user }: { user: User }) {
 
   // Descargar una copia completa en un archivo .json
   const handleExportFile = () => {
-    downloadBackupFile({ personalData, events, sideEffects, metrics });
+    downloadBackupFile({ personalData, events, sideEffects, metrics, appointments });
     const now = new Date().toISOString();
     updateSyncMeta(user.uid, { exportedAt: now });
     setExportedAt(now);
@@ -425,6 +487,7 @@ function HealthApp({ user }: { user: User }) {
     const ev = mergeById(events, imported.events);
     const se = mergeById(sideEffects, imported.sideEffects);
     const mt = mergeById(metrics, imported.metrics);
+    const ap = mergeById(appointments, imported.appointments);
 
     const replacePersonal = imported.personalData && window.confirm(
       `¿Reemplazar también los datos personales por los del archivo (${imported.personalData.fullName})?`
@@ -433,9 +496,10 @@ function HealthApp({ user }: { user: User }) {
     setEvents(ev.merged);
     setSideEffects(se.merged);
     setMetrics(mt.merged);
+    setAppointments(ap.merged);
     if (replacePersonal && imported.personalData) setPersonalData(imported.personalData);
 
-    return { events: ev.added, sideEffects: se.added, metrics: mt.added };
+    return { events: ev.added, sideEffects: se.added, metrics: mt.added, appointments: ap.added };
   };
 
   // Cerrar sesión. En un dispositivo compartido conviene borrar también la copia local.
@@ -467,6 +531,7 @@ function HealthApp({ user }: { user: User }) {
     setEvents([]);
     setSideEffects([]);
     setMetrics([]);
+    setAppointments([]);
     
     triggerNotification('Base de datos local reiniciada. Puedes empezar a ingresar registros desde cero.', 'success');
   };
@@ -771,6 +836,21 @@ function HealthApp({ user }: { user: User }) {
               </button>
 
               <button
+                onClick={() => setActiveTab('agenda')}
+                className={`py-1.5 px-3.5 rounded-lg font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'agenda'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                }`}
+                id="tab-btn-agenda"
+              >
+                Agenda
+                {pendingConfirmation > 0 && (
+                  <span className="bg-amber-500 text-white text-[9px] font-bold rounded-full px-1.5 py-px">{pendingConfirmation}</span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setActiveTab('labs')}
                 className={`py-1.5 px-3.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
                   activeTab === 'labs'
@@ -852,8 +932,45 @@ function HealthApp({ user }: { user: User }) {
               </div>
             </div>
 
+            {/* Próximos turnos de la agenda */}
+            {activeTab !== 'agenda' && (upcomingAppointments.length > 0 || pendingConfirmation > 0) && (
+              <button
+                onClick={() => setActiveTab('agenda')}
+                className="w-full text-left bg-white rounded-xl border border-indigo-100 shadow-xs p-4 hover:border-indigo-300 transition-colors cursor-pointer"
+                id="upcoming-appointments-box"
+              >
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <CalendarDays className="w-4 h-4 text-indigo-600" />
+                  Próximos turnos
+                  {pendingConfirmation > 0 && (
+                    <span className="normal-case tracking-normal text-amber-700 font-semibold">· {pendingConfirmation} para confirmar si se realizaron</span>
+                  )}
+                </h3>
+                <ul className="space-y-1">
+                  {upcomingAppointments.slice(0, 3).map((a) => (
+                    <li key={a.id} className="text-xs text-slate-700 flex flex-wrap gap-x-2">
+                      <span className="font-bold capitalize">{appointmentStart(a).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })} {a.time}</span>
+                      <span>{a.specialty} – {a.title}</span>
+                      {a.location && <span className="text-slate-400">· {a.location}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </button>
+            )}
+
             {/* CONTENIDO PRINCIPAL SEGÚN PESTAÑA */}
             <div className="min-h-0 animate-fade-in">
+              {activeTab === 'agenda' && (
+                <AgendaPanel
+                  appointments={appointments}
+                  onAdd={handleAddAppointments}
+                  onUpdate={handleUpdateAppointment}
+                  onDelete={handleDeleteAppointment}
+                  onMarkDone={handleAppointmentDone}
+                  onAddedToCalendar={handleAddedToCalendar}
+                />
+              )}
+
               {activeTab === 'timeline' && (
                 <ClinicalTimeline 
                   events={events} 
@@ -904,7 +1021,7 @@ function HealthApp({ user }: { user: User }) {
 
             {isAiReportOpen && (
               <AiReportModal
-                data={{ personalData, events, sideEffects, metrics }}
+                data={{ personalData, events, sideEffects, metrics, appointments }}
                 onClose={() => setIsAiReportOpen(false)}
               />
             )}
