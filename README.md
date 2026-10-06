@@ -34,3 +34,11 @@ defecto) que el usuario copia y pega, si quiere, en el chat que elija.
 Requisitos (una sola vez):
 1. GitHub → Settings → Pages → **Source: GitHub Actions**.
 2. Firebase → Authentication → Settings → Authorized domains → agregar `juanzad.github.io`.
+
+## Agenda de turnos
+
+Pestaña "Agenda": turnos pasados, de hoy y futuros, con tratamientos de varias fechas, turnos que
+se repiten cada N días y confirmación de los turnos pasados ("Se realizó" lo agrega a la línea de
+tiempo). "Agregar al calendario" genera un archivo iCalendar (`src/utils/ics.ts`) con aviso: en el
+iPhone, Safari ofrece agregarlo al Calendario, que es quien envía la notificación. No hay servidor
+de avisos. Los turnos se guardan en `users/{uid}/appointments` (incluido en `firestore.rules`).

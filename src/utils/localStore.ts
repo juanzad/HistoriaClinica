@@ -1,9 +1,9 @@
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry } from '../types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, Appointment } from '../types';
 
 // Copia local del historial en el navegador, separada por usuario (uid) para que
 // dos cuentas que usen el mismo dispositivo no vean los datos de la otra.
 
-const FIELDS = ['personal', 'events', 'side_effects', 'metrics'] as const;
+const FIELDS = ['personal', 'events', 'side_effects', 'metrics', 'appointments'] as const;
 type Field = (typeof FIELDS)[number];
 
 // Claves de la versión anterior (sin login). Se migran una sola vez al primer usuario que entra.
@@ -15,6 +15,7 @@ export interface LocalRecord {
   events?: MedicalEvent[];
   sideEffects?: SideEffectEntry[];
   metrics?: MetricEntry[];
+  appointments?: Appointment[];
 }
 
 const keyFor = (uid: string, field: Field) => `hc_${uid}_${field}`;
@@ -54,6 +55,7 @@ export function loadLocalRecord(uid: string): LocalRecord {
     events: withIds(readJson<MedicalEvent[]>(keyFor(uid, 'events')), 'event'),
     sideEffects: withIds(readJson<SideEffectEntry[]>(keyFor(uid, 'side_effects')), 'effect'),
     metrics: withIds(readJson<MetricEntry[]>(keyFor(uid, 'metrics')), 'metric'),
+    appointments: readJson<Appointment[]>(keyFor(uid, 'appointments')),
   };
 }
 
@@ -67,6 +69,7 @@ export function saveLocalRecord(uid: string, record: Required<LocalRecord>): boo
     localStorage.setItem(keyFor(uid, 'events'), JSON.stringify(record.events));
     localStorage.setItem(keyFor(uid, 'side_effects'), JSON.stringify(record.sideEffects));
     localStorage.setItem(keyFor(uid, 'metrics'), JSON.stringify(record.metrics));
+    localStorage.setItem(keyFor(uid, 'appointments'), JSON.stringify(record.appointments));
     return true;
   } catch (e) {
     console.error('No se pudo guardar la copia local:', e);

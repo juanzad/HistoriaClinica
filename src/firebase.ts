@@ -18,7 +18,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile } from './types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile, Appointment } from './types';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -31,9 +31,10 @@ export interface HealthRecord {
   events: MedicalEvent[];
   sideEffects: SideEffectEntry[];
   metrics: MetricEntry[];
+  appointments: Appointment[];
 }
 
-const SUBCOLLECTIONS = ['events', 'sideEffects', 'metrics'] as const;
+const SUBCOLLECTIONS = ['events', 'sideEffects', 'metrics', 'appointments'] as const;
 const MAX_BATCH_WRITES = 450; // Firestore admite hasta 500 escrituras por lote.
 
 export function signInWithGoogle() {
@@ -144,7 +145,7 @@ export async function saveHealthRecord(
   const stripped = data.events.map((e) =>
     e.files ? { ...e, files: e.files.map(({ data: _data, ...meta }) => meta) } : e
   );
-  const current = { events: stripped, sideEffects: data.sideEffects, metrics: data.metrics };
+  const current = { events: stripped, sideEffects: data.sideEffects, metrics: data.metrics, appointments: data.appointments };
 
   // 1. Primero se calcula qué habría que borrar de la nube. Si es un borrado grande y no fue pedido
   //    a mano, no se escribe nada: la nube queda intacta hasta que el usuario lo confirme.
@@ -198,10 +199,11 @@ export async function loadHealthRecord(): Promise<(HealthRecord & { updatedAt: s
     const docs = await getDocs(collection(db, 'users', uid, name));
     return docs.docs.map((d) => d.data() as T);
   };
-  const [storedEvents, sideEffects, metrics] = await Promise.all([
+  const [storedEvents, sideEffects, metrics, appointments] = await Promise.all([
     loadAll<MedicalEvent>('events'),
     loadAll<SideEffectEntry>('sideEffects'),
     loadAll<MetricEntry>('metrics'),
+    loadAll<Appointment>('appointments'),
   ]);
 
   // Reconstruir el contenido de los adjuntos a partir de sus trozos.
@@ -220,5 +222,6 @@ export async function loadHealthRecord(): Promise<(HealthRecord & { updatedAt: s
     events: events.sort(byDateDesc),
     sideEffects: sideEffects.sort(byDateDesc),
     metrics: metrics.sort(byDateDesc),
+    appointments,
   };
 }

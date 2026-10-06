@@ -74,3 +74,25 @@ export interface MetricEntry {
   notes?: string;
   bmi: number; // derived but stored for history
 }
+
+export type AppointmentStatus = 'Programado' | 'Realizado' | 'Cancelado';
+
+/** Turno de la agenda (pasado, presente o futuro). */
+export interface Appointment {
+  id: string;
+  date: string;          // YYYY-MM-DD
+  time: string;          // HH:MM (hora local)
+  durationMin: number;
+  specialty: string;     // libre: Odontología, Oncología, Inmunología… (se agregan a medida que se usan)
+  title: string;         // motivo: "Control", "Implante – 2.ª sesión"…
+  professional?: string;
+  location?: string;
+  notes?: string;
+  status: AppointmentStatus;
+  reminderMinutes: number; // aviso en el calendario; 0 = sin aviso
+  seriesId?: string;       // turnos de un mismo tratamiento cargados juntos
+  linkedEventId?: string;  // evento de la línea de tiempo creado al marcarlo "Realizado"
+  createdAt: string;
+  updatedAt: string;
+  calendarAddedAt?: string; // última vez que se agregó al calendario (para avisar si cambió después)
+}

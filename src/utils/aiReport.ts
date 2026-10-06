@@ -1,4 +1,4 @@
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, LabResults } from '../types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, LabResults, Appointment } from '../types';
 
 // Informe en texto para pegar en un chat de IA elegido por el usuario. La app no envía nada:
 // el usuario decide qué compartir y dónde. En modo anónimo se omiten nombre, fecha de
@@ -25,9 +25,10 @@ export interface AiReportInput {
   events: MedicalEvent[];
   sideEffects: SideEffectEntry[];
   metrics: MetricEntry[];
+  appointments?: Appointment[];
 }
 
-export function buildAiReport({ personalData: p, events, sideEffects, metrics }: AiReportInput, anonymous: boolean): string {
+export function buildAiReport({ personalData: p, events, sideEffects, metrics, appointments = [] }: AiReportInput, anonymous: boolean): string {
   const out: string[] = [];
   const today = new Date().toISOString().slice(0, 10);
 
@@ -91,6 +92,20 @@ export function buildAiReport({ personalData: p, events, sideEffects, metrics }:
       `- ${m.date} · Peso ${m.weight} kg · IMC ${m.bmi} · Presión ${m.systolic}/${m.diastolic} mmHg · FC ${m.heartRate} lpm` +
         (m.notes ? ` · ${oneLine(m.notes)}` : '')
     );
+  }
+
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const nextAppointments = appointments
+    .filter((a) => a.status === 'Programado' && a.date >= localToday)
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  out.push('');
+  out.push(`## Próximos turnos (${nextAppointments.length})`);
+  if (nextAppointments.length === 0) out.push('Sin turnos programados.');
+  for (const a of nextAppointments) {
+    const who = anonymous ? '' : [a.professional, a.location].filter(Boolean).join(', ');
+    out.push(`- ${a.date} ${a.time} · ${a.specialty} · ${oneLine(a.title)}${who ? ` (${who})` : ''}`);
+    if (a.notes) out.push(`  - Notas: ${oneLine(a.notes)}`);
   }
 
   return out.join('\n');
