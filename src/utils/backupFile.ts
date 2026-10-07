@@ -1,4 +1,4 @@
-import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, EventType, Appointment, AppointmentStatus } from '../types';
+import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, EventType, Appointment, AppointmentStatus, LabValue } from '../types';
 
 // Copia completa del historial en un archivo .json, para guardarla fuera de la app
 // o para importar datos recuperados (por ejemplo, de un PDF de la versión anterior).
@@ -37,6 +37,21 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 // Solo se aceptan registros con la forma esperada: el archivo puede venir de cualquier lado.
+function parseLabValue(v: unknown): LabValue | null {
+  if (!isObject(v) || !str(v.key) || typeof v.value !== 'number' || !Number.isFinite(v.value)) return null;
+  const optNum = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : undefined);
+  return {
+    key: v.key,
+    name: str(v.name) || v.key,
+    value: v.value,
+    unit: str(v.unit) || undefined,
+    refLow: optNum(v.refLow),
+    refHigh: optNum(v.refHigh),
+    refText: str(v.refText) || undefined,
+    qualifier: v.qualifier === '<' || v.qualifier === '>' ? v.qualifier : undefined,
+  };
+}
+
 function parseEvent(v: unknown): MedicalEvent | null {
   if (!isObject(v) || !str(v.id) || !isDate(v.date) || !EVENT_TYPES.includes(v.type)) return null;
   return {
@@ -49,6 +64,9 @@ function parseEvent(v: unknown): MedicalEvent | null {
     institution: str(v.institution),
     notes: str(v.notes) || undefined,
     labResults: isObject(v.labResults) ? v.labResults : undefined,
+    labValues: Array.isArray(v.labValues)
+      ? v.labValues.map(parseLabValue).filter((x: LabValue | null): x is LabValue => x !== null)
+      : undefined,
     files: Array.isArray(v.files) ? v.files : undefined,
     createdAt: str(v.createdAt) || new Date().toISOString(),
   };

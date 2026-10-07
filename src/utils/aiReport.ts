@@ -1,4 +1,5 @@
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, LabResults, Appointment } from '../types';
+import { buildLabSeries } from './labCatalog';
 
 // Informe en texto para pegar en un chat de IA elegido por el usuario. La app no envía nada:
 // el usuario decide qué compartir y dónde. En modo anónimo se omiten nombre, fecha de
@@ -65,14 +66,30 @@ export function buildAiReport({ personalData: p, events, sideEffects, metrics, a
   if (labs.length === 0) out.push('Sin análisis registrados.');
   for (const e of labs) {
     out.push(`- ${e.date} · ${oneLine(e.title)}${!anonymous && e.institution ? ` (${e.institution})` : ''}`);
-    const values = LAB_ROWS.filter((r) => typeof e.labResults?.[r.key] === 'number').map(
-      (r) => `${r.name}: ${e.labResults![r.key]} ${r.unit} (ref. ${r.range})`
-    );
+    const values = e.labValues?.length
+      ? e.labValues.map((v) => `${v.name}: ${v.qualifier ?? ''}${v.value}${v.unit ? ' ' + v.unit : ''}${v.refText ? ` (ref. ${v.refText})` : ''}`)
+      : LAB_ROWS.filter((r) => typeof e.labResults?.[r.key] === 'number').map(
+          (r) => `${r.name}: ${e.labResults![r.key]} ${r.unit} (ref. ${r.range})`
+        );
     if (values.length) out.push(`  - Valores: ${values.join('; ')}`);
     if (e.description) out.push(`  - Resumen: ${oneLine(e.description)}`);
     if (e.notes) out.push(`  - Notas: ${oneLine(e.notes)}`);
   }
   out.push('');
+
+  // Resumen calculado de la evolución de cada parámetro (mismos cálculos que la app).
+  const series = buildLabSeries(events).filter((x) => x.points.length > 1);
+  if (series.length) {
+    out.push(`## Evolución de laboratorio (${series.length} parámetros con 2 o más valores)`);
+    for (const x of series) {
+      const pctTxt = x.changeFirstPct === undefined ? '' : `, ${x.changeFirstPct > 0 ? '+' : ''}${x.changeFirstPct.toFixed(1)} % desde el primero`;
+      out.push(
+        `- ${x.label}: ${x.points.map((p) => `${p.date} ${p.qualifier ?? ''}${p.value}`).join(' → ')} ${x.unit ?? ''}` +
+          ` · último ${x.status}${x.refText ? ` (ref. ${x.refText})` : ''} · evolución: ${x.evolution} · tendencia: ${x.trend}${pctTxt}`
+      );
+    }
+    out.push('');
+  }
 
   const effects = [...sideEffects].sort(byDateAsc);
   out.push(`## Efectos secundarios (${effects.length})`);

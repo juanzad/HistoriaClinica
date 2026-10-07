@@ -23,7 +23,9 @@ import SideEffectsTracker from './components/SideEffectsTracker';
 import PersonalDataPanel from './components/PersonalDataPanel';
 import MetricCharts from './components/MetricCharts';
 import BackupPanel from './components/BackupPanel';
-import LabComparisonPanel from './components/LabComparisonPanel';
+import LabEvolutionPanel from './components/LabEvolutionPanel';
+import type { LabImportItem } from './components/LabImportModal';
+import { legacyResults } from './utils/labCatalog';
 import LoginScreen from './components/LoginScreen';
 import AiReportModal from './components/AiReportModal';
 import AgendaPanel from './components/AgendaPanel';
@@ -377,6 +379,56 @@ function HealthApp({ user }: { user: User }) {
   const handleUpdatePersonalData = (newData: PersonalData) => {
     setPersonalData(newData);
     triggerNotification('Perfil de salud actualizado.', 'success');
+  };
+
+  // --- ANÁLISIS DE LABORATORIO DESDE PDF ---
+  // Crea un evento "Laboratorio" por informe, o completa el que ya existe ese mismo día
+  // (p. ej. los recuperados del PDF viejo, que solo tenían la fecha). El PDF queda adjunto.
+  const handleImportLabReports = (items: LabImportItem[]) => {
+    const ts = new Date().toISOString();
+    setEvents((prev) => {
+      let next = [...prev];
+      for (const { report, values, file, mergeIntoEventId } of items) {
+        const labValues = values.map(({ known: _known, ...v }) => v);
+        const out = labValues.filter((v) => (v.refLow !== undefined && v.value < v.refLow) || (v.refHigh !== undefined && v.value > v.refHigh));
+        const summary = [
+          `${labValues.length} valores${report.laboratory ? ` (${report.laboratory})` : ''}.`,
+          out.length ? `Fuera de rango: ${out.map((v) => `${v.name} ${v.value}${v.unit ? ' ' + v.unit : ''}`).join(', ')}.` : 'Todos los valores dentro del rango de referencia.',
+          ...report.observations.map((o) => `Observaciones: ${o}`),
+        ].join(' ');
+        const base = {
+          title: `Análisis de laboratorio${report.laboratory ? ` – ${report.laboratory}` : ''}`,
+          professional: report.doctor ?? '',
+          institution: report.laboratory ?? '',
+          description: summary,
+        };
+        const existing = mergeIntoEventId ? next.find((e) => e.id === mergeIntoEventId) : undefined;
+        if (existing) {
+          const placeholder = /recuperado del PDF/i.test(existing.title);
+          const mergedValues = [...(existing.labValues ?? []).filter((v) => !labValues.some((n) => n.key === v.key)), ...labValues];
+          next = next.map((e) => e.id === existing.id ? {
+            ...e,
+            ...(placeholder ? base : { professional: e.professional || base.professional, institution: e.institution || base.institution }),
+            labValues: mergedValues,
+            labResults: { ...(e.labResults ?? {}), ...legacyResults(mergedValues) },
+            files: [...(e.files ?? []), file],
+          } : e);
+        } else {
+          next.push({
+            id: `event-${crypto.randomUUID()}`,
+            date: report.date,
+            type: 'Laboratorio',
+            ...base,
+            labValues,
+            labResults: legacyResults(labValues),
+            files: [file],
+            createdAt: ts,
+          });
+        }
+      }
+      return next.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+    triggerNotification(items.length > 1 ? `Se guardaron ${items.length} análisis de laboratorio.` : 'Análisis de laboratorio guardado.', 'success');
   };
 
   // --- AGENDA DE TURNOS ---
@@ -981,9 +1033,7 @@ function HealthApp({ user }: { user: User }) {
               )}
 
               {activeTab === 'labs' && (
-                <LabComparisonPanel 
-                  events={events} 
-                />
+                <LabEvolutionPanel events={events} onImport={handleImportLabReports} />
               )}
 
               {activeTab === 'effects' && (
