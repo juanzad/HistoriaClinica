@@ -31,6 +31,18 @@ export interface LabResults {
   ast_got?: number;     // TGO / AST en U/L (Hígado)
 }
 
+/** Un valor de laboratorio leído del informe (o cargado a mano), con su unidad y rango. */
+export interface LabValue {
+  key: string;            // clave canónica (p. ej. "hemoglobina"), para comparar entre informes
+  name: string;           // nombre como figura en el informe
+  value: number;
+  unit?: string;
+  refLow?: number;
+  refHigh?: number;
+  refText?: string;       // rango tal como figura en el informe
+  qualifier?: '<' | '>';  // "Menor de 0.15" → value 0.15, qualifier "<"
+}
+
 export interface MedicalFile {
   id: string;
   name: string;
@@ -50,6 +62,7 @@ export interface MedicalEvent {
   files?: MedicalFile[];
   notes?: string;
   labResults?: LabResults; // Optional structured lab values
+  labValues?: LabValue[];  // Todos los valores del informe (lector de PDF de laboratorio)
   createdAt: string;
 }
 
