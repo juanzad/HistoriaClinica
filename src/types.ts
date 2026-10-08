@@ -108,4 +108,5 @@ export interface Appointment {
   createdAt: string;
   updatedAt: string;
   calendarAddedAt?: string; // última vez que se agregó al calendario (para avisar si cambió después)
+  googleSyncedVersion?: string; // updatedAt de la versión que quedó en Google Calendar
 }
