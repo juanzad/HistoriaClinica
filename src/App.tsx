@@ -30,6 +30,7 @@ import LoginScreen from './components/LoginScreen';
 import AiReportModal from './components/AiReportModal';
 import AgendaPanel from './components/AgendaPanel';
 import { appointmentStart } from './utils/ics';
+import { useGoogleCalendar } from './utils/useGoogleCalendar';
 
 import { 
   FileText, 
@@ -450,6 +451,11 @@ function HealthApp({ user }: { user: User }) {
     const ts = new Date().toISOString();
     setAppointments((prev) => prev.map((a) => (ids.includes(a.id) ? { ...a, calendarAddedAt: ts, updatedAt: a.updatedAt > ts ? a.updatedAt : ts } : a)));
   };
+
+  // Google Calendar: se anota qué versión de cada turno quedó en Google (sin tocar updatedAt).
+  const googleCalendar = useGoogleCalendar(user.uid, user.email, appointments, isLoaded, (versions) => {
+    setAppointments((prev) => prev.map((a) => (versions[a.id] !== undefined ? { ...a, googleSyncedVersion: versions[a.id] } : a)));
+  });
 
   // "Se realizó": queda en la línea de tiempo como evento clínico, enlazado al turno.
   const handleAppointmentDone = (a: Appointment) => {
@@ -1020,6 +1026,7 @@ function HealthApp({ user }: { user: User }) {
                   onDelete={handleDeleteAppointment}
                   onMarkDone={handleAppointmentDone}
                   onAddedToCalendar={handleAddedToCalendar}
+                  googleCalendar={googleCalendar}
                 />
               )}
 

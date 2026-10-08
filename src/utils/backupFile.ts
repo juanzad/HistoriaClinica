@@ -119,6 +119,7 @@ function parseAppointment(v: unknown): Appointment | null {
     createdAt: str(v.createdAt) || new Date().toISOString(),
     updatedAt: str(v.updatedAt) || new Date().toISOString(),
     calendarAddedAt: str(v.calendarAddedAt) || undefined,
+    googleSyncedVersion: str(v.googleSyncedVersion) || undefined,
   };
 }
 

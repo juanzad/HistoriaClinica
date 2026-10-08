@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
   CalendarDays, CalendarPlus, Plus, Clock, MapPin, User, Pencil, Trash2, CheckCircle2, XCircle,
-  ChevronLeft, ChevronRight, AlertTriangle, X, History,
+  ChevronLeft, ChevronRight, AlertTriangle, X, History, RefreshCw, Loader2, Link2,
 } from 'lucide-react';
 import { Appointment } from '../types';
 import { appointmentStart, openInCalendar } from '../utils/ics';
+import { CALENDAR_NAME } from '../utils/googleCalendar';
+import type { GoogleCalendarState } from '../utils/useGoogleCalendar';
 
 interface AgendaPanelProps {
   appointments: Appointment[];
@@ -14,6 +16,7 @@ interface AgendaPanelProps {
   /** Marca el turno como realizado y lo pasa a la línea de tiempo. */
   onMarkDone: (appointment: Appointment) => void;
   onAddedToCalendar: (ids: string[]) => void;
+  googleCalendar?: GoogleCalendarState;
 }
 
 const REMINDERS = [
@@ -84,7 +87,62 @@ const emptyForm = (): FormState => ({
   notes: '', reminderMinutes: DEFAULT_REMINDER, repeat: 'none', extraDates: [], everyDays: 21, count: 4,
 });
 
-export default function AgendaPanel({ appointments, onAdd, onUpdate, onDelete, onMarkDone, onAddedToCalendar }: AgendaPanelProps) {
+function GoogleCalendarBox({ g }: { g: GoogleCalendarState }) {
+  const [confirmOff, setConfirmOff] = useState(false);
+  if (g.status === 'loading') return null;
+  const connected = Boolean(g.calendarId);
+  const busy = g.status === 'syncing';
+  return (
+    <div className="border border-slate-200 rounded-xl p-4 space-y-2 bg-slate-50/60" id="google-calendar-box">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-blue-600" />
+          <span className="text-sm font-bold text-slate-800">Google Calendar</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {!connected ? (
+            <button onClick={g.sync} disabled={busy} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white flex items-center gap-1 cursor-pointer" id="btn-google-connect">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarPlus className="w-3.5 h-3.5" />} Conectar Google Calendar
+            </button>
+          ) : (
+            <>
+              <button onClick={g.sync} disabled={busy} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white flex items-center gap-1 cursor-pointer" id="btn-google-sync">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {busy ? 'Sincronizando…' : 'Sincronizar ahora'}
+              </button>
+              {confirmOff ? (
+                <span className="flex items-center gap-1 text-xs">
+                  <span className="text-slate-600">¿Desconectar?</span>
+                  <button onClick={() => { g.disconnect(); setConfirmOff(false); }} className="font-bold px-2 py-1 rounded bg-slate-700 text-white cursor-pointer" id="btn-google-disconnect-yes">Sí</button>
+                  <button onClick={() => setConfirmOff(false)} className="font-bold px-2 py-1 rounded bg-slate-200 cursor-pointer">No</button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmOff(true)} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-white text-slate-600 cursor-pointer" id="btn-google-disconnect">Desconectar</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-slate-600" id="google-status">
+        {!connected
+          ? `Crea el calendario "${CALENDAR_NAME}" en tu cuenta de Google y mantiene ahí tus turnos, con el aviso elegido. Si tu iPhone tiene la cuenta de Google agregada, también los ves en su Calendario. La app solo puede manejar ese calendario: no ve los demás.`
+          : g.status === 'ok'
+            ? `✓ Turnos sincronizados con el calendario "${CALENDAR_NAME}". Los cambios se envían solos durante la próxima hora.`
+            : g.status === 'syncing'
+              ? 'Enviando los turnos a Google Calendar…'
+              : g.status === 'error'
+                ? ''
+                : `Vinculado con el calendario "${CALENDAR_NAME}". ${g.pending > 0 ? `Hay ${g.pending} ${g.pending === 1 ? 'turno con cambios' : 'turnos con cambios'} por enviar: ` : ''}toca "Sincronizar ahora" (Google pide confirmar el acceso cada hora).`}
+      </p>
+      {g.message && (
+        <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-2 py-1 flex items-start gap-1" id="google-error">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />{g.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function AgendaPanel({ appointments, onAdd, onUpdate, onDelete, onMarkDone, onAddedToCalendar, googleCalendar }: AgendaPanelProps) {
   const [form, setForm] = useState<FormState | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -273,6 +331,8 @@ export default function AgendaPanel({ appointments, onAdd, onUpdate, onDelete, o
             </button>
           )}
         </div>
+
+        {googleCalendar && <GoogleCalendarBox g={googleCalendar} />}
 
         {form && (
           <form onSubmit={submit} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4" id="appointment-form">

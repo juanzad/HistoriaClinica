@@ -16,6 +16,7 @@ import {
   getDocs,
   writeBatch,
   deleteDoc,
+  deleteField,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile, Appointment } from './types';
@@ -183,9 +184,26 @@ export async function saveHealthRecord(
   }
 
   // 5. Al final, la fecha: si algo falló antes, la nube no aparenta tener una copia completa más nueva.
-  await setDoc(doc(db, 'users', uid), { personalData: data.personalData, updatedAt });
+  // mergeFields: solo se reemplazan estos dos campos (se conserva, p. ej., el calendario de Google vinculado).
+  await setDoc(doc(db, 'users', uid), { personalData: data.personalData, updatedAt }, { mergeFields: ['personalData', 'updatedAt'] });
 
   return { updatedAt, blockedDeletes: 0 };
+}
+
+/** Calendario de Google vinculado ("Turnos médicos"), guardado en la nube para usarlo desde cualquier dispositivo. */
+export async function loadGoogleCalendarId(): Promise<string | null> {
+  const { uid } = requireUser();
+  const snap = await getDoc(doc(db, 'users', uid));
+  return snap.exists() ? ((snap.data().googleCalendarId as string) ?? null) : null;
+}
+
+export async function saveGoogleCalendarId(calendarId: string | null) {
+  const { uid } = requireUser();
+  const ref = doc(db, 'users', uid);
+  // Solo si ya hay un respaldo: un documento sin historial confundiría a la carga desde la nube.
+  if (!(await getDoc(ref)).exists()) return false;
+  await setDoc(ref, { googleCalendarId: calendarId ?? deleteField() }, { merge: true });
+  return true;
 }
 
 /** Recupera el historial del usuario conectado, o null si todavía no guardó nada. */
