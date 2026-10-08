@@ -5,7 +5,7 @@ import { appointmentStart, calendarTitle } from './ics';
 // Permiso pedido: "calendar.app.created" → la app solo puede crear calendarios propios y
 // manejar los eventos de esos calendarios. No puede ver ni tocar tus otros calendarios.
 
-export const GOOGLE_CLIENT_ID = '208076503788-bhr10sbj2gvj9nj39hlefndf8nqjp4u9.apps.googleusercontent.com';
+export const GOOGLE_CLIENT_ID = '571029449619-hgvjr856qtul16gru41uaou2bojsgoe1.apps.googleusercontent.com';
 const SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
 const API = 'https://www.googleapis.com/calendar/v3';
 export const CALENDAR_NAME = 'Turnos médicos';
