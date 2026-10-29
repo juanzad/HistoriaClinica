@@ -19,6 +19,7 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+import { defaultPersonalData } from './defaultData';
 import { PersonalData, MedicalEvent, SideEffectEntry, MetricEntry, MedicalFile, Appointment } from './types';
 
 const app = initializeApp(firebaseConfig);
@@ -234,8 +235,10 @@ export async function loadHealthRecord(): Promise<(HealthRecord & { updatedAt: s
   const byDateDesc = (a: { date: string }, b: { date: string }) =>
     new Date(b.date).getTime() - new Date(a.date).getTime();
 
+  // Un documento incompleto (p. ej. un respaldo que se cortó a mitad) no debe romper la pantalla:
+  // lo que falte se completa con valores vacíos.
   return {
-    personalData: snap.data().personalData as PersonalData,
+    personalData: { ...defaultPersonalData, ...(snap.data().personalData as Partial<PersonalData> | undefined) },
     updatedAt: (snap.data().updatedAt as string) ?? null,
     events: events.sort(byDateDesc),
     sideEffects: sideEffects.sort(byDateDesc),
