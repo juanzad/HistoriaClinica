@@ -229,7 +229,7 @@ function HealthApp({ user }: { user: User }) {
     const applyRecord = (record: typeof local, fromCloudAt?: string | null) => {
       if (cancelled) return;
       skipNextChange.current = true;
-      setPersonalData(record.personalData ?? defaultPersonalData);
+      setPersonalData({ ...defaultPersonalData, ...record.personalData });
       setEvents(record.events ?? defaultEvents);
       setSideEffects(record.sideEffects ?? defaultSideEffects);
       setMetrics(record.metrics ?? defaultMetrics);
@@ -517,10 +517,10 @@ function HealthApp({ user }: { user: User }) {
 
     if (syncTimer.current) clearTimeout(syncTimer.current);
     skipNextChange.current = true;
-    setPersonalData(cloudData.personalData);
-    setEvents(cloudData.events);
-    setSideEffects(cloudData.sideEffects);
-    setMetrics(cloudData.metrics);
+    setPersonalData(cloudData.personalData ?? defaultPersonalData);
+    setEvents(cloudData.events ?? []);
+    setSideEffects(cloudData.sideEffects ?? []);
+    setMetrics(cloudData.metrics ?? []);
     setAppointments(cloudData.appointments ?? []);
     if (cloudData.updatedAt) updateSyncMeta(user.uid, { syncedAt: cloudData.updatedAt, changedAt: cloudData.updatedAt });
     isPaused.current = false;
